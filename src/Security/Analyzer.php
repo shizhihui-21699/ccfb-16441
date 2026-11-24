@@ -160,16 +160,15 @@ final class Analyzer
             }
             // A string that names a function is a callable.  Passing one to a
             // higher-order function (`array_map("system", [...])`) is code
-            // execution even though the outer name is allow-listed.  Reject
-            // callable-valued arguments unless the tier is fully trusted.
-            if (!Capabilities::has($this->caps, Capabilities::ARBITRARY_CALL)) {
+            // execution even though the outer name may look benign.  Reject
+            // callable-valued arguments for functions that actually consume a
+            // callback (none are allow-listed; this is defence in depth).
+            if (!Capabilities::has($this->caps, Capabilities::ARBITRARY_CALL)
+                && Capabilities::takesCallback($name)) {
                 foreach ($e->args as $a) {
-                    if (self::callableStringOf($a) !== null) {
-                        $this->error(
-                            'call.callback',
-                            sprintf('Function name "%s" passed as a callback is not permitted', self::callableStringOf($a)),
-                            $e->line
-                        );
+                    $cb = self::callableStringOf($a);
+                    if ($cb !== null) {
+                        $this->error('call.callback', sprintf('Function name "%s" passed as a callback is not permitted', $cb), $e->line);
                     }
                 }
             }

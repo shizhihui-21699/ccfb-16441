@@ -65,6 +65,23 @@ final class ParserDoSTest extends TestCase
         $this->assertContains('call.function', $rules);
     }
 
+    public function testDataEqual_ToFunctionNameIsNotRejected(): void
+    {
+        // The callback guard must be precise: a value that happens to equal a
+        // function name (a user called "system") is ordinary data.
+        $dir = sys_get_temp_dir() . '/tplguard_fp_' . bin2hex(random_bytes(4));
+        @mkdir($dir, 0777, true);
+        file_put_contents($dir . '/p.html', '{strlen($name)}|{implode(",",$tags)}|{$name|trim}');
+        try {
+            $e = new \TplGuard\Engine($dir . '/c', [\TplGuard\Security\TrustPolicy::site($dir)]);
+            $out = $e->render('p', ['name' => 'system', 'tags' => ['system', 'exec']]);
+            $this->assertSame('6|system,exec|system', $out);
+        } finally {
+            @unlink($dir . '/p.html');
+            @rmdir($dir);
+        }
+    }
+
     public function testLargeTemplateIsStillBounded(): void
     {
         // A big-but-legitimate page must still parse (many rows, not deep).

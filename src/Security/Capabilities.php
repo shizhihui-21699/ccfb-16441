@@ -158,6 +158,28 @@ final class Capabilities
         'pg_query', 'gzinflate', 'gzuncompress', 'gzdecode', 'str_rot13',
     ];
 
+    /**
+     * Functions that take a callback and would therefore turn a template-
+     * supplied function name into code execution.  None of these is on the
+     * safe list; this set exists so the analyzer/runtime can reject a
+     * callable-valued argument *precisely* (only for functions that would use
+     * it) instead of rejecting any string that happens to match a function
+     * name — which would break legitimate data like a user called "system".
+     */
+    public const CALLBACK_FUNCTIONS = [
+        'array_map', 'array_filter', 'array_reduce', 'array_walk',
+        'array_walk_recursive', 'usort', 'uasort', 'uksort', 'call_user_func',
+        'call_user_func_array', 'forward_static_call', 'forward_static_call_array',
+        'preg_replace_callback', 'preg_replace_callback_array', 'iterator_apply',
+        'ob_start', 'set_error_handler', 'set_exception_handler',
+        'register_shutdown_function', 'filter_var', 'mb_ereg_replace_callback',
+    ];
+
+    public static function takesCallback(string $name): bool
+    {
+        return in_array(strtolower(ltrim($name, '\\')), self::CALLBACK_FUNCTIONS, true);
+    }
+
     /** @param list<string> $caps */
     public static function has(array $caps, string $cap): bool
     {

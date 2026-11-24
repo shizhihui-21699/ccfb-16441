@@ -112,8 +112,7 @@ final class MemberAccessTest extends TestCase
         $this->assertStringNotContainsString('uid=', $out);
     }
 
-    private static function rrmdir(string $dir): void
-    {
+    private static function rrmdir(string $dir): void    {
         if (!is_dir($dir)) {
             return;
         }

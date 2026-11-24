@@ -49,9 +49,15 @@ final class Calls
         if (isset($deny[$lower]) || !\TplGuard\Security\Capabilities::isSafeFunction($lower)) {
             throw new \LogicException("Function {$name}() is not permitted");
         }
-        foreach ($args as $a) {
-            if (self::looksCallable($a)) {
-                throw new \LogicException("Callable argument to {$name}() is not permitted");
+        // Only functions that actually consume a callback can turn an argument
+        // into code execution; check callable args for those alone, so a plain
+        // string that happens to equal a function name (a user named "system")
+        // is not rejected.
+        if (\TplGuard\Security\Capabilities::takesCallback($lower)) {
+            foreach ($args as $a) {
+                if (self::looksCallable($a)) {
+                    throw new \LogicException("Callable argument to {$name}() is not permitted");
+                }
             }
         }
         return $name(...$args);
