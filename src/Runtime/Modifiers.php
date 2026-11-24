@@ -3,7 +3,6 @@ declare(strict_types=1);
 
 namespace TplGuard\Runtime;
 
-use TplGuard\Security\Capabilities;
 
 /**
  * Pure implementations of the `|modifier` vocabulary.  Compiled templates
@@ -67,17 +66,11 @@ final class Modifiers
             'nl2p' => self::nl2p(self::str($value)),
             'fix' => $value,
             'html2text' => html_entity_decode(strip_tags(self::str($value)), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'),
-            default => throw new \LogicException("Unknown modifier: $name"),
+            // Fail soft: a modifier that slipped past the allow-list/compiler
+            // must not take down the worker with an uncaught exception.  The
+            // analyzer already refuses unknown modifiers at compile time.
+            default => $value,
         };
-    }
-
-    /** @param list<mixed> $args */
-    public static function isAllowed(string $name, array $caps): bool
-    {
-        if (Capabilities::has($caps, Capabilities::ARBITRARY_CALL)) {
-            return true;
-        }
-        return Capabilities::isSafeFilter($name);
     }
 
     private static function str(mixed $v): string

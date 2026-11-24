@@ -12,7 +12,7 @@ adding measurable cost to a forum serving millions of requests a day.
 ```
 php examples/demo.php            # the whole story, one run
 php bin/tplguard-scan <dir>      # scan an existing skin tree before rollout
-./vendor/bin/phpunit             # 100 tests
+./vendor/bin/phpunit             # 120 tests
 php benchmarks/render_bench.php  # hot-path cost
 ```
 
@@ -239,6 +239,6 @@ src/
   Engine.php    resolve -> compile+cache -> render
 bin/tplguard-scan    CLI scanner
 examples/demo.php    end-to-end demonstration
-tests/               parity, attack corpus, policy, cache, syntax (100 tests)
+tests/               parity, attack corpus, policy, cache, syntax, DoS (120 tests)
 benchmarks/          hot-path benchmark
 ```
