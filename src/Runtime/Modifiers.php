@@ -13,6 +13,11 @@ final class Modifiers
 {
     public static function apply(string $name, mixed $value, array $args = []): mixed
     {
+        // Never let a modifier reach into an object: `|json` would call
+        // JsonSerializable::jsonSerialize() (a gadget sink) and disclose public
+        // properties; `|count` would call Countable::count().  Templates only
+        // get scalars/arrays, matching the deny-all member policy.
+        $value = self::sanitize($value);
         return match (strtolower($name)) {
             'escape', 'e', 'html', 'htmlspecialchars' => htmlspecialchars(
                 self::str($value),
@@ -73,8 +78,26 @@ final class Modifiers
         };
     }
 
-    private static function str(mixed $v): string
+    /**
+     * Reduce template values to inert scalars/arrays: objects become null so
+     * no modifier can invoke a magic method or read object state.
+     */
+    private static function sanitize(mixed $v): mixed
     {
+        if (is_object($v)) {
+            return null;
+        }
+        if (is_array($v)) {
+            $out = [];
+            foreach ($v as $k => $item) {
+                $out[$k] = self::sanitize($item);
+            }
+            return $out;
+        }
+        return $v;
+    }
+
+    private static function str(mixed $v): string    {
         if (is_array($v)) {
             return '';
         }

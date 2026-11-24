@@ -12,7 +12,7 @@ adding measurable cost to a forum serving millions of requests a day.
 ```
 php examples/demo.php            # the whole story, one run
 php bin/tplguard-scan <dir>      # scan an existing skin tree before rollout
-./vendor/bin/phpunit             # 120 tests
+./vendor/bin/phpunit             # 122 tests
 php benchmarks/render_bench.php  # hot-path cost
 ```
 
@@ -86,6 +86,17 @@ new Engine($cacheDir, $policies, memberPolicy: new ClassAllowList(
 Allow-listed methods only ever receive scalars/arrays/null — never an object
 or a string that PHP treats as a callable — so a method cannot be turned into
 a trampoline for `system()`.
+
+The same rule applies everywhere an object could otherwise be inspected:
+allow-listed **functions** reject object arguments (so `json_encode($o)` cannot
+call `JsonSerializable::jsonSerialize()` or dump public properties), and
+**modifiers** reduce their input to scalars/arrays (so `|json` / `|count` cannot
+reach a gadget). `Renderer::out()` never calls `__toString()`. In short, a
+deny-all member policy is upheld across every operation, not just `->`.
+
+Include depth is bounded by the engine (not a per-call counter), so a
+self-including or mutually-including template raises a `TemplateException`
+instead of recursively exhausting worker memory.
 
 ## 3. Why it is not a regex filter
 
@@ -239,6 +250,6 @@ src/
   Engine.php    resolve -> compile+cache -> render
 bin/tplguard-scan    CLI scanner
 examples/demo.php    end-to-end demonstration
-tests/               parity, attack corpus, policy, cache, syntax, DoS (120 tests)
+tests/               parity, attack corpus, policy, cache, syntax, DoS (122 tests)
 benchmarks/          hot-path benchmark
 ```

@@ -106,21 +106,37 @@ final class Engine
      */
     private function renderUnderPolicy(string $name, array $vars, ?TrustPolicy $policy): string
     {
-        // Bind to the *resolved* policy (not the requested one): a top-level
-        // render passes null, and includes must inherit the tier the parent
-        // actually resolved to, never fall back to the whole policy list.
-        [, $resolved] = $this->resolve($name, $policy);
-        $class = $this->classFor($name, $resolved);
-        $ctx = new Context($vars, $this->memberPolicy);
-        /** @var CompiledTemplate $tpl */
-        $tpl = new $class();
-        $renderer = new Renderer($this->tagHandler, 12);
-        $renderer->setMemberPolicy($this->memberPolicy);
-        $renderer->setTemplateResolver(
-            fn (string $n, Context $c): string => $this->renderUnderPolicy($n, $c->vars, $resolved)
-        );
-        return $tpl->render($ctx, $renderer);
+        // Includes recurse through this method, so the depth counter lives on
+        // the engine (a per-call Renderer would reset it and let a self-
+        // including template exhaust memory).
+        if (++$this->renderDepth > self::MAX_INCLUDE_DEPTH) {
+            $this->renderDepth--;
+            throw new TemplateException(sprintf('Template include depth exceeded at "%s"', $name));
+        }
+        try {
+            // Bind to the *resolved* policy (not the requested one): a top-level
+            // render passes null, and includes must inherit the tier the parent
+            // actually resolved to, never fall back to the whole policy list.
+            [, $resolved] = $this->resolve($name, $policy);
+            $class = $this->classFor($name, $resolved);
+            $ctx = new Context($vars, $this->memberPolicy);
+            /** @var CompiledTemplate $tpl */
+            $tpl = new $class();
+            $renderer = new Renderer($this->tagHandler, self::MAX_INCLUDE_DEPTH);
+            $renderer->setMemberPolicy($this->memberPolicy);
+            $renderer->setTemplateResolver(
+                fn (string $n, Context $c): string => $this->renderUnderPolicy($n, $c->vars, $resolved)
+            );
+            return $tpl->render($ctx, $renderer);
+        } finally {
+            $this->renderDepth--;
+        }
     }
+
+    private int $renderDepth = 0;
+
+    /** Includes deeper than this are treated as a runaway/template loop. */
+    private const MAX_INCLUDE_DEPTH = 16;
 
     /**
      * Hot path: resolve the template and return its compiled class without

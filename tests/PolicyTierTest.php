@@ -131,6 +131,31 @@ final class PolicyTierTest extends TestCase
         $this->assertSame('A<b>x</b>B', $this->engine()->render('page', ['name' => 'x']));
     }
 
+    public function testSelfIncludeIsStoppedByDepthLimit(): void
+    {
+        // A moderator-editable template must not be able to include itself
+        // forever and exhaust the worker's memory.
+        file_put_contents(self::$work . '/skin/loop.html', 'A{include file="loop"}');
+        $this->expectException(\TplGuard\Exception\TemplateException::class);
+        $this->engine()->render('loop');
+    }
+
+    public function testObjectIsNeverReachableThroughModifiersOrFunctions(): void
+    {
+        // An object handed to a template must not leak public state or invoke
+        // magic methods (JsonSerializable, __toString, Countable) through an
+        // allow-listed function or modifier.
+        $gadget = new Fixtures\TemplateGadget();
+        file_put_contents(
+            self::$work . '/site/gadget_probe.html',
+            '[{$o|json}][{json_encode($o)}][{$o}][{$o|count}]'
+        );
+        $out = $this->engine()->render('gadget_probe', ['o' => $gadget]);
+        $this->assertStringNotContainsString('TOPSECRET', $out);
+        $this->assertStringNotContainsString('uid=', $out);
+        $this->assertStringNotContainsString('PWNED', $out);
+    }
+
     private static function rrmdir(string $dir): void
     {
         if (!is_dir($dir)) {
@@ -144,5 +169,28 @@ final class PolicyTierTest extends TestCase
             $f->isDir() ? @rmdir($f->getPathname()) : @unlink($f->getPathname());
         }
         @rmdir($dir);
+    }
+}
+
+namespace TplGuard\Tests\Fixtures;
+
+/** A hostile object a controller might (carelessly) pass to a template. */
+final class TemplateGadget implements \JsonSerializable, \Stringable, \Countable
+{
+    public string $secret = 'TOPSECRET';
+
+    public function jsonSerialize(): mixed
+    {
+        return 'uid=' . (string) shell_exec('id -u');
+    }
+
+    public function __toString(): string
+    {
+        return 'PWNED';
+    }
+
+    public function count(): int
+    {
+        return 42;
     }
 }

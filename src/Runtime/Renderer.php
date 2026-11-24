@@ -93,7 +93,10 @@ final class Renderer
             return 'Array';
         }
         if (is_object($v)) {
-            return method_exists($v, '__toString') ? (string) $v : '';
+            // Never call __toString(): it is a magic method on a
+            // template-inaccessible object and a potential gadget.  Objects
+            // are not printable in a template; output nothing.
+            return '';
         }
         return '';
     }

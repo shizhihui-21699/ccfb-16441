@@ -49,18 +49,44 @@ final class Calls
         if (isset($deny[$lower]) || !\TplGuard\Security\Capabilities::isSafeFunction($lower)) {
             throw new \LogicException("Function {$name}() is not permitted");
         }
-        // Only functions that actually consume a callback can turn an argument
-        // into code execution; check callable args for those alone, so a plain
-        // string that happens to equal a function name (a user named "system")
-        // is not rejected.
+        // Reject objects anywhere in the argument tree.  Even a "pure" function
+        // can reach into an object: json_encode() calls JsonSerializable::
+        // jsonSerialize() (a gadget sink) and discloses every public property;
+        // count() calls Countable::count(); get_object_vars-style helpers leak
+        // state.  Non-trusted templates therefore only ever pass scalars/arrays.
+        // Degrade to null (empty output) rather than throwing: a controller
+        // that hands a template an object must not white-screen the page.
+        foreach ($args as $a) {
+            if (self::containsObject($a)) {
+                return null;
+            }
+        }
+        // Additionally, a string/array that PHP would treat as a callable must
+        // not reach a higher-order function.  None are allow-listed; this is
+        // defence in depth so a future allow-list edit cannot reopen the hole.
         if (\TplGuard\Security\Capabilities::takesCallback($lower)) {
             foreach ($args as $a) {
                 if (self::looksCallable($a)) {
-                    throw new \LogicException("Callable argument to {$name}() is not permitted");
+                    return null;
                 }
             }
         }
         return $name(...$args);
+    }
+
+    private static function containsObject(mixed $v): bool
+    {
+        if (is_object($v)) {
+            return true;
+        }
+        if (is_array($v)) {
+            foreach ($v as $item) {
+                if (self::containsObject($item)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static function looksCallable(mixed $v): bool
