@@ -156,7 +156,7 @@ final class Renderer
      *
      * @param array<string,mixed> $params
      */
-    public function include(mixed $name, array $params): string
+    public function include(mixed $name, array $params, ?Context $parent = null): string
     {
         if (!is_string($name) || $name === '') {
             return '';
@@ -166,7 +166,13 @@ final class Renderer
         }
         $this->depth++;
         try {
-            $child = new Context($params);
+            // Legacy engines rendered an include in the *caller's* scope with
+            // the explicit params merged on top; preserve that.
+            $vars = $parent?->vars ?? [];
+            foreach ($params as $k => $v) {
+                $vars[$k] = $v;
+            }
+            $child = new Context($vars);
             return $this->renderTemplate($name, $child);
         } finally {
             $this->depth--;

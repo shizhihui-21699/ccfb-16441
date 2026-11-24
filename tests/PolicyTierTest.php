@@ -113,6 +113,24 @@ final class PolicyTierTest extends TestCase
         }
     }
 
+    public function testIncludeCannotEscalateToAnotherTier(): void
+    {
+        // A skin template must not be able to `{include}` a vendor template
+        // (which would run with PHP enabled). Includes inherit the includer's
+        // resolved policy, so the vendor template is simply not found.
+        file_put_contents(self::$work . '/vendor/php_partial.html', '{php} echo "RCE"; {/php}');
+        file_put_contents(self::$work . '/skin/uses_partial.html', '{include file="php_partial"}');
+        $this->expectException(\TplGuard\Exception\TemplateException::class);
+        $this->engine()->render('uses_partial');
+    }
+
+    public function testSameTierIncludeWorks(): void
+    {
+        file_put_contents(self::$work . '/site/frag.html', '<b>{$name}</b>');
+        file_put_contents(self::$work . '/site/page.html', 'A{include file="frag"}B');
+        $this->assertSame('A<b>x</b>B', $this->engine()->render('page', ['name' => 'x']));
+    }
+
     private static function rrmdir(string $dir): void
     {
         if (!is_dir($dir)) {

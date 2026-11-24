@@ -138,7 +138,7 @@ final class Compiler
                 $params[] = var_export($k, true) . ' => ' . $this->expr($v);
             }
             $this->line(sprintf(
-                '$__out .= $r->include(%s, [%s]);',
+                '$__out .= $r->include(%s, [%s], $ctx);',
                 $this->expr($n->file),
                 implode(', ', $params)
             ));
