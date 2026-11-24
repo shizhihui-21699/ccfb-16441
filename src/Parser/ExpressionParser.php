@@ -18,6 +18,15 @@ final class ExpressionParser
     /** @var list<Token> */
     private array $tokens;
     private int $i = 0;
+    private int $depth = 0;
+
+    /**
+     * Hard cap on expression nesting.  Without it, `{(((...(1)...)))}` with
+     * a few hundred thousand parentheses exhausts the stack and kills the
+     * worker — a compile-time DoS reachable from any editable template.
+     * Real skins nest a handful of levels; 100 is far above anything genuine.
+     */
+    private const MAX_DEPTH = 100;
 
     /** Binary operator => [leftBindingPower, rightAssoc] */
     private const BINARY = [
@@ -120,6 +129,18 @@ final class ExpressionParser
 
     /** @param int $minBp minimum binding power */
     private function parseExpression(int $minBp): Ast\Expr
+    {
+        if (++$this->depth > self::MAX_DEPTH) {
+            throw new ParseException('Expression nesting too deep', $this->peek()->pos);
+        }
+        try {
+            return $this->parseExpressionInner($minBp);
+        } finally {
+            $this->depth--;
+        }
+    }
+
+    private function parseExpressionInner(int $minBp): Ast\Expr
     {
         $left = $this->parseUnary();
 

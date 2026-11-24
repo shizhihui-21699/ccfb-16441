@@ -57,6 +57,16 @@ syntax that expresses them at that tier.
 A small, explicit **deny-list** (`Capabilities::DENY_FUNCTIONS`) is checked
 *before* any allow-list, so a future edit to the allow-list cannot re-open a
 door (`system`, `exec`, `eval`, `file_*`, reflection, `unserialize`, …).
+
+The safe-function allow-list also excludes **higher-order functions**
+(`array_map`, `array_filter`, `array_reduce`) and **unbounded-allocation
+functions** (`str_repeat`, `array_fill`, `range`): a string callable passed to
+`array_map("system", [...])` is code execution even though `array_map` itself
+is harmless, and `str_repeat("A", 400000000)` is a one-line worker-killer. The
+analyzer additionally rejects any callable-shaped string argument
+(`call.callback`), and the compiler routes every safe call through
+`Calls::safe()`, which re-checks the name and refuses callable arguments at
+run time — so this is not a single-point-of-failure check.
 Superglobals are never readable by any template, any tier.
 
 **Object member access is deny-by-default** (`Security/MemberPolicy`). A
@@ -195,10 +205,12 @@ executes the template.
 ## 7. What is and is not covered
 
 **Covered:** the reported SSTI-to-RCE path (moderator/theme-editor writes
-template expressions), all variants in `tests/AttackCorpusTest.php` (39
-payloads: `{php}`, `{eval}`, function calls, computed callables, static access,
-superglobals, dynamic include, `|eval`, magic methods, …), trust-tier confusion,
-path traversal and symlink escape in template lookup.
+template expressions), all variants in `tests/AttackCorpusTest.php` (44
+payloads: `{php}`, `{eval}`, direct and callback function calls, computed
+callables, static access, superglobals, dynamic include, `|eval`, magic
+methods, object-gadget chains, …), trust-tier confusion, cross-tier include
+escalation, path traversal and symlink escape in template lookup, and
+compile-time denial of service (`tests/ParserDoSTest.php`).
 
 **Out of scope / still your job:**
 

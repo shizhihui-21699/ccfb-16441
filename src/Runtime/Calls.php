@@ -31,6 +31,56 @@ final class Calls
     }
 
     /**
+     * Call an allow-listed ("safe") function from a non-trusted template.
+     *
+     * The name is a literal from generated code, but the *arguments* come from
+     * the template and may include strings.  Refuse any argument that PHP
+     * would treat as a callable so a higher-order function cannot be turned
+     * into a trampoline, and re-apply the deny-list.  This mirrors the
+     * analyzer so a future allow-list edit cannot reopen the callback hole.
+     *
+     * @param list<mixed> $args
+     */
+    public static function safe(string $name, array $args): mixed
+    {
+        static $deny = null;
+        $deny ??= array_flip(\TplGuard\Security\Capabilities::DENY_FUNCTIONS);
+        $lower = strtolower(ltrim($name, '\\'));
+        if (isset($deny[$lower]) || !\TplGuard\Security\Capabilities::isSafeFunction($lower)) {
+            throw new \LogicException("Function {$name}() is not permitted");
+        }
+        foreach ($args as $a) {
+            if (self::looksCallable($a)) {
+                throw new \LogicException("Callable argument to {$name}() is not permitted");
+            }
+        }
+        return $name(...$args);
+    }
+
+    private static function looksCallable(mixed $v): bool
+    {
+        if (is_object($v) && !($v instanceof \Stringable)) {
+            return true; // objects (incl. Closures, class-string holders)
+        }
+        if (is_string($v)) {
+            return $v !== '' && is_callable($v);
+        }
+        if (is_array($v)) {
+            // `[object, 'method']` / `['Class', 'staticMethod']` callable arrays
+            if (count($v) === 2 && isset($v[1]) && is_string($v[1])) {
+                [$a, $b] = $v;
+                return (is_object($a) || is_string($a)) && is_callable([$a, $b]);
+            }
+            foreach ($v as $item) {
+                if (self::looksCallable($item)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
      * Call a method on an object.  Restricted to public methods whose names
      * do not begin with an underscore; arguments are passed as-is.  Only
      * emitted for templates holding the METHOD_CALL capability.

@@ -58,11 +58,22 @@ final class Lexer
         return (new self($src))->run();
     }
 
+    /**
+     * Upper bound on tokens in a single expression.  A template can be edited
+     * by a moderator, so an expression like `"A"."B"."C"...` repeated a
+     * million times must fail fast instead of consuming the worker's memory
+     * when it is parsed, stamped and compiled. Real templates are tiny.
+     */
+    private const MAX_TOKENS = 20000;
+
     /** @return list<Token> */
     private function run(): array
     {
         $space = false;
         while ($this->i < $this->n) {
+            if (count($this->tokens) > self::MAX_TOKENS) {
+                throw new ParseException('Expression is too long', $this->i);
+            }
             $c = $this->src[$this->i];
             if ($c === ' ' || $c === "\t" || $c === "\n" || $c === "\r") {
                 $space = true;

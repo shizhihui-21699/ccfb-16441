@@ -86,8 +86,11 @@ final class TemplateParser
     {
         // A raw PHP open-tag region is exactly the legacy attack surface: the
         // old engine included compiled output that PHP then executed.  Capture
-        // it as a PHP node so the capability check applies.
-        $php = strpos($this->src, '<?', $this->pos);
+        // it as a PHP node so the capability check applies.  Skip the search
+        // entirely when the template contains no PHP open tag at all (checked
+        // once), otherwise it costs a full backward scan per text chunk.
+        $hasPhp = $this->hasPhp ??= str_contains($this->src, '<?');
+        $php = $hasPhp ? strpos($this->src, '<?', $this->pos) : false;
         if ($php !== false) {
             $starts = [];
             foreach ($this->tagOpeners() as $o) {
@@ -128,15 +131,38 @@ final class TemplateParser
         $this->emit(new Ast\Text($text));
     }
 
+    /**
+     * Openers actually present in this template.  Scanning for an opener that
+     * occurs nowhere is O(remaining length) on every text chunk (because
+     * strpos returns false only after reading to the end), which makes a large
+     * document quadratic.  Computing the set once up front keeps parsing
+     * linear in template size — important for big thread pages.
+     *
+     * @var list<string>|null
+     */
+    private ?array $presentOpeners = null;
+
+    /** Whether the source contains a PHP open tag anywhere (computed once). */
+    private ?bool $hasPhp = null;
+
     /** @return list<string> */
     private function tagOpeners(): array
     {
-        $o = [$this->opts->open];
-        if ($this->opts->open === '{') {
-            $o[] = '<!--{';
-            $o[] = '[';
+        if ($this->presentOpeners !== null) {
+            return $this->presentOpeners;
         }
-        return $o;
+        $all = [$this->opts->open];
+        if ($this->opts->open === '{') {
+            $all[] = '<!--{';
+            $all[] = '[';
+        }
+        $present = [];
+        foreach ($all as $o) {
+            if (str_contains($this->src, $o)) {
+                $present[] = $o;
+            }
+        }
+        return $this->presentOpeners = $present ?: [$this->opts->open];
     }
 
     private function consumeTag(): bool
@@ -621,16 +647,42 @@ final class TemplateParser
         }
     }
 
-    private static function stampExpr(Ast\Expr $e, int $line): void
+    /**
+     * Assign line numbers to an expression tree.  Iterative (explicit stack)
+     * so a deeply nested or very wide expression cannot exhaust the call
+     * stack — the lexer already caps token count and nesting, but this keeps
+     * the walk linear and stack-safe regardless.
+     */
+    private static function stampExpr(Ast\Expr $root, int $line): void
     {
-        if ($e->line === 0) {
-            $e->line = $line;
+        $stack = [$root];
+        $seen = 0;
+        while ($stack) {
+            if (++$seen > 50000) {
+                return; // hard stop; analysis does not depend on exact lines
+            }
+            $e = array_pop($stack);
+            if (!$e instanceof Ast\Expr) {
+                continue;
+            }
+            if ($e->line === 0) {
+                $e->line = $line;
+            }
+            foreach (self::childExprs($e) as $c) {
+                if ($c instanceof Ast\Expr) {
+                    $stack[] = $c;
+                }
+            }
         }
-        // Recurse over the expression tree.
-        $children = match (true) {
+    }
+
+    /** @return list<Ast\Expr> */
+    private static function childExprs(Ast\Expr $e): array
+    {
+        return match (true) {
             $e instanceof Ast\Binary => [$e->left, $e->right],
             $e instanceof Ast\Unary => [$e->operand],
-            $e instanceof Ast\Ternary => array_filter([$e->cond, $e->then, $e->else]),
+            $e instanceof Ast\Ternary => array_values(array_filter([$e->cond, $e->then, $e->else])),
             $e instanceof Ast\Coalesce => [$e->left, $e->right],
             $e instanceof Ast\Index => [$e->base, $e->key],
             $e instanceof Ast\Prop => [$e->base],
@@ -638,15 +690,13 @@ final class TemplateParser
             $e instanceof Ast\FilterExpr => array_merge([$e->base], $e->args),
             $e instanceof Ast\Call => $e->args,
             $e instanceof Ast\DynamicCall => array_merge([$e->callee], $e->args),
-            $e instanceof Ast\VarRef => array_values(array_map(fn ($p) => $p[1], array_filter($e->path, fn ($p) => $p[0] === 'expr'))),
+            $e instanceof Ast\VarRef => array_values(array_map(
+                fn ($p) => $p[1],
+                array_filter($e->path, fn ($p) => $p[0] === 'expr')
+            )),
             $e instanceof Ast\ArrayLit => self::flattenItems($e->items),
             default => [],
         };
-        foreach ($children as $c) {
-            if ($c instanceof Ast\Expr) {
-                self::stampExpr($c, $line);
-            }
-        }
     }
 
     /** @param list<array{0:?Ast\Expr,1:Ast\Expr}> $items */

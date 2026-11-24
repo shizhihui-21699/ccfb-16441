@@ -158,6 +158,21 @@ final class Analyzer
                     $this->error('call.function', sprintf('Function %s() is not permitted in this template', $name), $e->line);
                 }
             }
+            // A string that names a function is a callable.  Passing one to a
+            // higher-order function (`array_map("system", [...])`) is code
+            // execution even though the outer name is allow-listed.  Reject
+            // callable-valued arguments unless the tier is fully trusted.
+            if (!Capabilities::has($this->caps, Capabilities::ARBITRARY_CALL)) {
+                foreach ($e->args as $a) {
+                    if (self::callableStringOf($a) !== null) {
+                        $this->error(
+                            'call.callback',
+                            sprintf('Function name "%s" passed as a callback is not permitted', self::callableStringOf($a)),
+                            $e->line
+                        );
+                    }
+                }
+            }
             foreach ($e->args as $a) {
                 $this->walkExpr($a);
             }
@@ -243,7 +258,34 @@ final class Analyzer
         ], true);
     }
 
-    private function isStaticSafeInclude(Ast\Expr $e): bool    {
+    /**
+     * If an expression is a string literal (or a bare identifier) that PHP
+     * would treat as a callable, return it; otherwise null.  Used to stop a
+     * function name being smuggled in as a callback argument.
+     */
+    private static function callableStringOf(Ast\Expr $e): ?string
+    {
+        if ($e instanceof Ast\Literal && is_string($e->value)) {
+            $v = $e->value;
+        } elseif ($e instanceof Ast\ConstRef) {
+            $v = $e->name;
+        } else {
+            return null;
+        }
+        $v = trim($v);
+        if ($v === '') {
+            return null;
+        }
+        // `Class::method` and plain `func` shapes are the callable forms that
+        // matter; anything else is an ordinary string argument.
+        if (preg_match('/^\\\\?[A-Za-z_][A-Za-z0-9_\\\\]*(::[A-Za-z_][A-Za-z0-9_]*)?$/', $v)) {
+            return $v;
+        }
+        return null;
+    }
+
+    private function isStaticSafeInclude(Ast\Expr $e): bool
+    {
         return $e instanceof Ast\Literal && is_string($e->value)
             && preg_match('#^[A-Za-z0-9_/.-]+$#', $e->value) === 1
             && !str_contains($e->value, '..');

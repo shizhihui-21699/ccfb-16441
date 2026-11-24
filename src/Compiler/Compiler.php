@@ -329,7 +329,14 @@ final class Compiler
                 && !(Capabilities::has($this->caps, Capabilities::SAFE_CALLS) && Capabilities::isSafeFunction($name))) {
                 throw new \LogicException("Function $name reached the compiler without capability");
             }
-            return sprintf('\\%s(%s)', $name, implode(', ', $args));
+            // Route through the guarded runtime entry point: it re-checks the
+            // name and refuses callable-valued arguments, so a higher-order
+            // allow-listed function cannot be used to reach `system`.
+            return sprintf(
+                '\\TplGuard\\Runtime\\Calls::safe(%s, [%s])',
+                var_export($name, true),
+                implode(', ', $args)
+            );
         }
         if ($e instanceof Ast\DynamicCall) {
             if (!Capabilities::has($this->caps, Capabilities::ARBITRARY_CALL)) {

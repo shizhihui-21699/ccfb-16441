@@ -94,40 +94,51 @@ final class Engine
     /** @param array<string,mixed> $vars */
     public function render(string $name, array $vars = []): string
     {
-        $class = $this->classFor($name);
+        return $this->renderUnderPolicy($name, $vars, null);
+    }
+
+    /**
+     * Render within a specific trust policy.  Includes inherit the *includer's*
+     * policy, so a skin template cannot `{include}` its way into a vendor
+     * (PHP-enabled) template and escalate.
+     *
+     * @param array<string,mixed> $vars
+     */
+    private function renderUnderPolicy(string $name, array $vars, ?TrustPolicy $policy): string
+    {
+        // Bind to the *resolved* policy (not the requested one): a top-level
+        // render passes null, and includes must inherit the tier the parent
+        // actually resolved to, never fall back to the whole policy list.
+        [, $resolved] = $this->resolve($name, $policy);
+        $class = $this->classFor($name, $resolved);
         $ctx = new Context($vars, $this->memberPolicy);
         /** @var CompiledTemplate $tpl */
         $tpl = new $class();
-        if ($this->tagHandler === null) {
-            // Fast path: a template with no plugin tags and no includes never
-            // touches the renderer's callbacks.  Reuse one stateless instance.
-            $renderer = $this->renderer ??= new Renderer(null, 12);
-            $renderer->setMemberPolicy($this->memberPolicy);
-            return $tpl->render($ctx, $renderer);
-        }
         $renderer = new Renderer($this->tagHandler, 12);
         $renderer->setMemberPolicy($this->memberPolicy);
-        $renderer->setTemplateResolver(fn (string $n, Context $c): string => $this->renderTemplate($n, $c));
+        $renderer->setTemplateResolver(
+            fn (string $n, Context $c): string => $this->renderUnderPolicy($n, $c->vars, $resolved)
+        );
         return $tpl->render($ctx, $renderer);
-    }
-
-    private ?Renderer $renderer = null;
-
-    private function renderTemplate(string $name, Context $ctx): string
-    {
-        return $this->render($name, $ctx->vars);
     }
 
     /**
      * Hot path: resolve the template and return its compiled class without
      * reading the source, as long as the file's stat signature is unchanged.
+     *
+     * $forced pins the trust policy (used by includes, which stay inside the
+     * includer's root).  The index key includes the policy so a name that
+     * exists under two roots never serves the wrong tier's artifact.
      */
-    private function classFor(string $name): string
+    private function classFor(string $name, ?TrustPolicy $forced = null): string
     {
-        $hit = $this->index->get($name);
+        $policyKey = $forced !== null ? 'p:' . $forced->name . ':' . $forced->root : '*';
+        $indexKey = $policyKey . "\0" . $name;
+
+        $hit = $this->index->get($indexKey);
         if ($hit !== null) {
             if (!ResolutionIndex::isValid($hit)) {
-                $this->index->forget($name);
+                $this->index->forget($indexKey);
             } elseif (class_exists($hit['class'], false)) {
                 return $hit['class'];
             } else {
@@ -140,26 +151,29 @@ final class Engine
                         return $hit['class'];
                     }
                 }
-                $this->index->forget($name);
+                $this->index->forget($indexKey);
             }
         }
 
-        [$file, $policy] = $this->resolve($name);
+        [$file, $policy] = $this->resolve($name, $forced);
         $policyIx = array_search($policy, $this->policies, true);
         $policyIx = $policyIx === false ? -1 : (int) $policyIx;
         $st = @stat($file);
         if ($st === false) {
             throw new TemplateException("Unreadable template: $name");
         }
-        $class = $this->loadClass($name, $file, $policy, $st);
+        // Include the *actual* policy in the logical name hashed into the cache
+        // key, so identical source under two roots yields two artifacts.
+        $cacheName = $policy->name . '/' . $name;
+        $class = $this->loadClass($cacheName, $file, $policy, $st);
         $this->index->put(
-            $name,
+            $indexKey,
             $file,
             $policyIx,
             $st['mtime'],
             $st['size'],
             $class,
-            $this->cache->key($name, $this->hashOf($file, $st), $policy->capabilities),
+            $this->cache->key($cacheName, $this->hashOf($file, $st), $policy->capabilities),
         );
         return $class;
     }
