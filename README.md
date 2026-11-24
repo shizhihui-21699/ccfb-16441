@@ -31,7 +31,7 @@ allowed, *for every template regardless of who could edit it*:
 | `{$x|eval:...}` and arbitrary modifiers | PHP callback by name | RCE |
 | `{$f(...)}`, `{("sys"."tem")(...)}` | computed callable | RCE |
 | `{include $tpl}`, `{template $name}` | any file | local file inclusion |
-| `$obj->method()`, `Foo::BAR`, `new Foo` | allowed | gadget chains |
+| `$obj->method()`, `$obj->prop`, `Foo::BAR`, `new Foo` | allowed | gadget chains |
 
 The separator between "theme markup" and "PHP" did not exist. Anyone who could
 write a template could run code.
@@ -58,6 +58,24 @@ A small, explicit **deny-list** (`Capabilities::DENY_FUNCTIONS`) is checked
 *before* any allow-list, so a future edit to the allow-list cannot re-open a
 door (`system`, `exec`, `eval`, `file_*`, reflection, `unserialize`, …).
 Superglobals are never readable by any template, any tier.
+
+**Object member access is deny-by-default** (`Security/MemberPolicy`). A
+template cannot walk an object graph the controller passed in: `$obj->prop`
+and `$obj->m()` return nothing unless the class *and* member are on an explicit
+allow-list. This closes the gadget path (`$obj->logger->write($cmd)`), which a
+function deny-list alone does not. When a skin genuinely needs a member, grant
+it narrowly:
+
+```php
+new Engine($cacheDir, $policies, memberPolicy: new ClassAllowList(
+    methods:    [\App\Forum\User::class => ['getDisplayName', 'isAdmin']],
+    properties: [\App\Forum\User::class => ['username', 'avatarUrl']],
+));
+```
+
+Allow-listed methods only ever receive scalars/arrays/null — never an object
+or a string that PHP treats as a callable — so a method cannot be turned into
+a trampoline for `system()`.
 
 ## 3. Why it is not a regex filter
 
@@ -190,9 +208,10 @@ path traversal and symlink escape in template lookup.
 - A compromised **admin** account. Admins can publish to the `site` root, which
   still has no PHP — but they can change code elsewhere. The `vendor` root must
   remain outside anything the admin panel can write.
-- Vulnerabilities in a plugin's own PHP (`tagHandler`). Plugin tags are treated
-  as trusted application code; the analyzer only guarantees the *template* cannot
-  feed them arbitrary PHP.
+- Vulnerabilities in a plugin's own PHP (`tagHandler`) or in an allow-listed
+  object method. Those are trusted application code; the engine guarantees the
+  *template* cannot feed them arbitrary PHP or a callable, but their own bodies
+  are yours to audit.
 
 ## 8. Layout
 

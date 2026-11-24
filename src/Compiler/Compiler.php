@@ -283,14 +283,16 @@ final class Compiler
                 throw new \LogicException('Dynamic index reached the compiler without capability');
             }
             return sprintf(
-                '\\TplGuard\\Runtime\\Context::dig(%s, %s)',
+                '$ctx->dig(%s, %s)',
                 $this->expr($e->base),
                 $this->expr($e->key)
             );
         }
         if ($e instanceof Ast\Prop) {
+            // Property reads go through the context's member policy — never a
+            // bare `->` that could walk into a gadget object.
             return sprintf(
-                '\\TplGuard\\Runtime\\Context::readProperty(%s, %s)',
+                '$ctx->readProperty(%s, %s)',
                 $this->expr($e->base),
                 var_export(ltrim($e->name, '$'), true)
             );
@@ -301,7 +303,7 @@ final class Compiler
             }
             $args = array_map(fn (Ast\Expr $a) => $this->expr($a), $e->args);
             return sprintf(
-                '\\TplGuard\\Runtime\\Calls::method(%s, %s, [%s])',
+                '$r->callMethod(%s, %s, [%s], $ctx)',
                 $this->expr($e->base),
                 var_export($e->name, true),
                 implode(', ', $args)

@@ -20,7 +20,49 @@ final class Renderer
         private $tagHandler,
         private int $maxIncludeDepth = 12,
         private int $depth = 0,
+        private ?\TplGuard\Security\MemberPolicy $members = null,
     ) {}
+
+    /**
+     * Invoke an object method, but only when the member policy permits it for
+     * this object's class, the method is public and non-magic, and its
+     * parameters are declarable from template values (scalars/arrays/null —
+     * never a callable, which could be invoked inside the method).
+     *
+     * @param list<mixed> $args
+     */
+    public function callMethod(mixed $object, string $method, array $args, Context $ctx): mixed
+    {
+        if (!is_object($object) || $this->members === null) {
+            return null;
+        }
+        if (!$this->members->allowsMethod($object, $method)) {
+            return null;
+        }
+        if (!method_exists($object, $method)) {
+            return null;
+        }
+        try {
+            $ref = new \ReflectionMethod($object, $method);
+        } catch (\ReflectionException) {
+            return null;
+        }
+        if (!$ref->isPublic() || $ref->isStatic() || $ref->isAbstract()) {
+            return null;
+        }
+        foreach ($args as $a) {
+            if (!is_scalar($a) && $a !== null && !is_array($a)) {
+                return null; // never hand a callable / object to the method
+            }
+            // A string that names a function is a callable; if the method
+            // forwards it to `$arg(...)` that is code execution.  Refuse any
+            // argument that PHP would treat as a callable.
+            if (is_string($a) && $a !== '' && is_callable($a)) {
+                return null;
+            }
+        }
+        return $object->{$method}(...$args);
+    }
 
     /**
      * Echo a value with PHP 8 `echo` semantics exactly, minus the warnings
@@ -141,6 +183,11 @@ final class Renderer
             return '';
         }
         return (string) $handler($name, $attrs, $body, $ctx);
+    }
+
+    public function setMemberPolicy(\TplGuard\Security\MemberPolicy $members): void
+    {
+        $this->members = $members;
     }
 
     /** @var null|\Closure(string,Context):string */

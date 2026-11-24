@@ -3,6 +3,9 @@ declare(strict_types=1);
 
 namespace TplGuard\Runtime;
 
+use TplGuard\Security\DenyAllMembers;
+use TplGuard\Security\MemberPolicy;
+
 /**
  * Variable scope handed to a compiled template.
  *
@@ -11,11 +14,8 @@ namespace TplGuard\Runtime;
  * the surrounding controller (the classic `{$_SERVER}` / `{$GLOBALS}`
  * escalation path) — only names the caller explicitly passed can be read.
  *
- * Even if a controller *does* pass a superglobal array in, reading it through
- * the usual name returns null: templates must not see `$_SERVER`,
- * `$_ENV`, `$_SESSION` and friends directly.  This is the single most useful
- * primitive for SSTI, because it leaks filesystem paths, credentials in the
- * environment, and session data.
+ * Object member reads go through a MemberPolicy (deny-by-default): a template
+ * cannot walk an object graph the controller passed in and reach a gadget.
  */
 final class Context
 {
@@ -25,14 +25,10 @@ final class Context
         '_SESSION', 'GLOBALS', 'argv', 'argc', 'this',
     ];
 
-    /**
-     * @param array<string,mixed> $vars
-     * @param bool $allowSuperglobals only for a trusted/admin template when an
-     *        operator deliberately opts in (see TrustPolicy)
-     */
+    /** @param array<string,mixed> $vars */
     public function __construct(
         public array $vars = [],
-        private bool $allowSuperglobals = false,
+        private MemberPolicy $members = new DenyAllMembers(),
     ) {}
 
     public function has(string $name): bool
@@ -55,11 +51,6 @@ final class Context
         unset($this->vars[$name]);
     }
 
-    private function isBlocked(string $root): bool
-    {
-        return !$this->allowSuperglobals && in_array($root, self::BLOCKED_ROOTS, true);
-    }
-
     /**
      * Read a static path such as `user.profile.name`, compiled to
      * `resolve('user', ['profile', 'name'])`.
@@ -68,12 +59,12 @@ final class Context
      */
     public function resolve(string $root, array $path): mixed
     {
-        if ($this->isBlocked($root)) {
+        if (in_array($root, self::BLOCKED_ROOTS, true)) {
             return null;
         }
         $v = $this->vars[$root] ?? null;
         foreach ($path as $key) {
-            $v = self::dig($v, $key);
+            $v = $this->dig($v, $key);
             if ($v === null) {
                 return null;
             }
@@ -82,10 +73,12 @@ final class Context
     }
 
     /**
-     * Index into array / string / public object property without warnings and
-     * without ever invoking user code (`__get`, `__call`, string callables).
+     * Index into an array / string, or read an allowed object property.
+     *
+     * Object property reads are gated by the member policy; arrays and strings
+     * are inert and need no policy.
      */
-    public static function dig(mixed $v, int|string $key): mixed
+    public function dig(mixed $v, int|string $key): mixed
     {
         if (is_array($v)) {
             return $v[$key] ?? null;
@@ -98,30 +91,23 @@ final class Context
             return null;
         }
         if (is_object($v)) {
-            return self::readProperty($v, (string) $key);
+            return $this->readProperty($v, (string) $key);
         }
         return null;
     }
 
     /**
-     * Read a *public, already-declared* property.  `get_object_vars()` from
-     * outside the class sees only public properties and does not trigger
-     * `__get()`; both properties are required for the read to succeed.
+     * Read a property only when the member policy allows it for this object's
+     * class.  Never triggers `__get()` and never returns non-public state.
      */
-    public static function readProperty(object $obj, string $name): mixed
+    public function readProperty(object $object, string $name): mixed
     {
-        if ($name === '' || $name[0] === '_') {
-            return null; // no magic / private access
-        }
-        if ($obj instanceof \Closure) {
+        if (!$this->members->allowsProperty($object, $name)) {
             return null;
         }
-        if (property_exists($obj, $name)) {
-            $vars = get_object_vars($obj); // public scope only
+        if (property_exists($object, $name)) {
+            $vars = get_object_vars($object); // public scope only
             return $vars[$name] ?? null;
-        }
-        if ($obj instanceof \ArrayAccess && $obj instanceof \ArrayObject) {
-            return $obj[$name] ?? null;
         }
         return null;
     }

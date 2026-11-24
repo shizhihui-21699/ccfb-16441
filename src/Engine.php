@@ -46,9 +46,16 @@ final class Engine
         /** @var callable(string,array,?string,Context):string|null */
         private $tagHandler = null,
         private int $compilerVersion = 0,
+        /**
+         * Which object members non-trusted templates may read/call.  Defaults
+         * to deny-all: a site/skin template cannot walk an object graph it was
+         * handed.  Grant narrowly with ClassAllowList when a skin needs it.
+         */
+        private ?\TplGuard\Security\MemberPolicy $memberPolicy = null,
     ) {
         $this->cache = new CompiledCache($this->cacheDir, $compilerVersion > 0 ? $compilerVersion : null);
         $this->index = new ResolutionIndex();
+        $this->memberPolicy ??= new \TplGuard\Security\DenyAllMembers();
     }
 
     private CompiledCache $cache;
@@ -88,15 +95,18 @@ final class Engine
     public function render(string $name, array $vars = []): string
     {
         $class = $this->classFor($name);
-        $ctx = new Context($vars);
+        $ctx = new Context($vars, $this->memberPolicy);
         /** @var CompiledTemplate $tpl */
         $tpl = new $class();
         if ($this->tagHandler === null) {
             // Fast path: a template with no plugin tags and no includes never
             // touches the renderer's callbacks.  Reuse one stateless instance.
-            return $tpl->render($ctx, $this->renderer ??= new Renderer(null, 12));
+            $renderer = $this->renderer ??= new Renderer(null, 12);
+            $renderer->setMemberPolicy($this->memberPolicy);
+            return $tpl->render($ctx, $renderer);
         }
         $renderer = new Renderer($this->tagHandler, 12);
+        $renderer->setMemberPolicy($this->memberPolicy);
         $renderer->setTemplateResolver(fn (string $n, Context $c): string => $this->renderTemplate($n, $c));
         return $tpl->render($ctx, $renderer);
     }
