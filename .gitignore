@@ -16,3 +16,11 @@ node_modules/
 __pycache__/
 .venv/
 venv/
+
+# PHP / project
+/vendor/
+composer.lock
+.phpunit.result.cache
+.phpunit.cache/
+/build/
+*.tmp

@@ -1,0 +1,58 @@
+#!/usr/bin/env php
+<?php
+declare(strict_types=1);
+
+/**
+ * tplguard-scan — offline SSTI/legacy-syntax scanner for a forum skin tree.
+ *
+ *   php bin/tplguard-scan <dir> [--policy=site|skin|vendor|trusted]
+ *                              [--format=text|json]
+ *                              [--fail-on-findings]
+ *
+ * Exit codes: 0 clean, 1 findings (with --fail-on-findings), 2 usage error.
+ */
+
+$autoload = __DIR__ . '/../vendor/autoload.php';
+require is_file($autoload) ? $autoload : __DIR__ . '/../autoload.php';
+
+use TplGuard\Scanner\Scanner;
+use TplGuard\Security\Capabilities;
+
+$args = array_slice($argv, 1);
+$dir = null;
+$policy = 'site';
+$format = 'text';
+$fail = false;
+foreach ($args as $a) {
+    if (str_starts_with($a, '--policy=')) {
+        $policy = substr($a, 9);
+    } elseif (str_starts_with($a, '--format=')) {
+        $format = substr($a, 9);
+    } elseif ($a === '--fail-on-findings') {
+        $fail = true;
+    } elseif (!str_starts_with($a, '-')) {
+        $dir = $a;
+    }
+}
+if ($dir === null || !is_dir($dir)) {
+    fwrite(STDERR, "usage: tplguard-scan <dir> [--policy=site|skin|vendor|trusted] [--format=text|json] [--fail-on-findings]\n");
+    exit(2);
+}
+
+$caps = match ($policy) {
+    'skin' => Capabilities::MINIMAL,
+    'site' => Capabilities::SITE,
+    'vendor', 'trusted' => Capabilities::TRUSTED,
+    default => null,
+};
+if ($caps === null) {
+    fwrite(STDERR, "unknown policy: $policy\n");
+    exit(2);
+}
+
+$scanner = new Scanner();
+$results = $scanner->scanTree($dir, $caps);
+echo $scanner->report($results, $format === 'json' ? 'json' : 'text');
+
+$failed = array_filter($results, fn ($r) => !$r['ok']);
+exit(($fail && $failed) ? 1 : 0);
